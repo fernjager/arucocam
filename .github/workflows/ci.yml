@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENCV_VERSION: 4.14.0
+  OPENCV_SHA256: ee8fb9b30eb60850431b4656447080e3737b56e45719c92b67f245950609f86e
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: armv6
+            toolchain_url: https://github.com/fernjager/arucocam/releases/download/toolchains-v2/armv6-eabihf--musl--stable-2026.08-1.tar.xz
+            toolchain_sha256: 73521cb071ef27c529c223caf5e8f157d3b87a6d862d20f3a7a01b3e0eb3139e
+            toolchain_dir: armv6-eabihf--musl--stable-2026.08-1
+            toolchain_prefix: arm-linux
+            toolchain_sysroot: arm-buildroot-linux-musleabihf
+            cpu_baseline: VFPV2
+            enable_neon: "OFF"
+            toolchain: build/cmake/toolchain/armv6-musl.cmake
+            qemu: qemu-arm
+            qemu_cpu: arm1176
+            dist: dist-armv6
+            bin: arucocam-arm32
+          - target: arm64
+            toolchain_url: https://github.com/fernjager/arucocam/releases/download/toolchains-v2/aarch64--musl--stable-2026.08-1.tar.xz
+            toolchain_sha256: b388c480a48e8e9f9b99e3d14e69219c4d61e5a2424a82faecb88a015b781a60
+            toolchain_dir: aarch64--musl--stable-2026.08-1
+            toolchain_prefix: aarch64-linux
+            toolchain_sysroot: aarch64-buildroot-linux-musl
+            cpu_baseline: NEON
+            enable_neon: "ON"
+            toolchain: build/cmake/toolchain/aarch64-musl.cmake
+            qemu: qemu-aarch64
+            qemu_cpu: max
+            dist: dist-arm64
+            bin: arucocam-arm64
+          - target: amd64
+            toolchain_url: https://github.com/fernjager/arucocam/releases/download/toolchains-v2/x86-64--musl--stable-2026.08-1.tar.xz
+            toolchain_sha256: 78d3a4683d6ac47b5ee73bd5bce210b55eb93dff1b137c61298af97eb0d2b5a6
+            toolchain_dir: x86-64--musl--stable-2026.08-1
+            toolchain_prefix: x86_64-linux
+            toolchain_sysroot: x86_64-buildroot-linux-musl
+            cpu_baseline: SSE2
+            enable_neon: "OFF"
+            toolchain: build/cmake/toolchain/x86_64-musl.cmake
+            qemu: qemu-x86_64
+            qemu_cpu: ""
+            dist: dist-amd64
+            bin: arucocam-amd64
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build static OpenCV image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: build/docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: arucocam-build:${{ matrix.target }}
+          build-args: |
+            BASE_PLATFORM=linux/amd64
+            TARGET=${{ matrix.target }}
+            TOOLCHAIN_URL=${{ matrix.toolchain_url }}
+            TOOLCHAIN_SHA256=${{ matrix.toolchain_sha256 }}
+            TOOLCHAIN_DIR=${{ matrix.toolchain_dir }}
+            TOOLCHAIN_PREFIX=${{ matrix.toolchain_prefix }}
+            TOOLCHAIN_SYSROOT=${{ matrix.toolchain_sysroot }}
+            OPENCV_CPU_BASELINE=${{ matrix.cpu_baseline }}
+            OPENCV_ENABLE_NEON=${{ matrix.enable_neon }}
+            OPENCV_VERSION=${{ env.OPENCV_VERSION }}
+            OPENCV_SHA256=${{ env.OPENCV_SHA256 }}
+            JOBS=4
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+
+      - name: Build and test
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" -w /project \
+            -e TARGET=${{ matrix.target }} \
+            -e TOOLCHAIN_FILE=${{ matrix.toolchain }} \
+            -e TOOLCHAIN_PREFIX=${{ matrix.toolchain_prefix }} \
+            -e TOOLCHAIN_SYSROOT=${{ matrix.toolchain_sysroot }} \
+            -e BUILD_DIR=build/out/${{ matrix.target }} \
+            -e DIST_DIR=${{ matrix.dist }} \
+            -e BINARY_NAME=${{ matrix.bin }} \
+            -e QEMU=${{ matrix.qemu }} \
+            -e QEMU_CPU='${{ matrix.qemu_cpu }}' \
+            -e ARUCOCAM_BUILD_TESTS=ON \
+            arucocam-build:${{ matrix.target }} \
+            bash -c 'ARUCOCAM_BUILD_TESTS=ON ./build/scripts/build.sh && ./build/scripts/check.sh'
+
+      - name: clang-tidy
+        if: matrix.target == 'amd64'
+        run: |
+          docker run --rm \
+            -v "$PWD:/project" -w /project \
+            -e TARGET=amd64 \
+            arucocam-build:amd64 \
+            ./build/scripts/tidy.sh
+
+      - name: Upload binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.bin }}
+          path: ${{ matrix.dist }}/${{ matrix.bin }}
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: arucocam-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble release files
+        run: |
+          mkdir -p release
+          cp LICENSE THIRD_PARTY_NOTICES.md release/
+          cp -R LICENSES release/
+          tar -czf artifacts/arucocam-licenses.tar.gz -C release .
+          cd artifacts
+          sha256sum arucocam-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: artifacts/*
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: |
+            artifacts/arucocam-*
+            artifacts/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          make_latest: true

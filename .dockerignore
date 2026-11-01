@@ -1,0 +1,13 @@
+.git
+build/out/
+build/tidy-*/
+dist/
+dist-*/
+.build/
+tests/marker.pgm
+tests/marker.jpg
+tests/marker.i420
+.DS_Store
+
+__pycache__/
+*.pyc
