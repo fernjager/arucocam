@@ -1,13 +1,14 @@
-# Bearing geometry
+# Bearing Geometry
 
-These are the full camera-relative geometry diagrams.  `README.md` uses the
-[compact two-panel summary](bearing-compact.svg) at the top; the full top and
-side views are below.  They are explanatory, not to scale.
+These are the full camera-relative geometry diagrams.  The project
+[README](../README.md) uses the [compact two-panel summary](bearing-compact.svg)
+at the top; the full top and side views are below.  They are explanatory, not to
+scale.
 
 `bearing` is the reported horizontal angle (yaw); the side view also shows the
 derived vertical angle `φ` (elevation).
 
-## Top view — compass-style convention (+ right)
+## Top View — Compass-Style Convention (+ Right)
 
 ![Top view, compass-style convention](bearing-top-view.svg)
 
@@ -35,7 +36,7 @@ z       = vert
 Earlier builds reported the opposite sign (positive left).  If you are parsing
 old output, use `H_target = H_camera - bearing`.
 
-## Side view — horiz and vert
+## Side View — `horiz` and `vert`
 
 ![Side view of horiz, vert, and slant](bearing-side-view.svg)
 
@@ -52,7 +53,7 @@ horiz = slant * cos(φ)
 
 `φ` is the elevation angle above the camera's horizontal plane.
 
-## Internal body-frame angle (+ left)
+## Internal Body-Frame Angle (+ Left)
 
 The detector still solves in the right-handed body frame:
 `bearing_rad = atan2(y_left, x_forward)`, positive counter-clockwise.
@@ -65,7 +66,7 @@ Compass heading from the internal body-frame angle:
 H_target = H_camera - bearing_rad
 ```
 
-## Why + right
+## Why + Right
 
 The router's `MotionDirector` already works in compass headings (clockwise from
 north), so a right-positive camera bearing avoids a sign flip at every call
